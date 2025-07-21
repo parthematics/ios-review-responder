@@ -17,6 +17,7 @@ use tui::{
     Frame, Terminal,
 };
 
+use crate::ai::{AIConfig, AIResponseGenerator};
 use crate::api::AppStoreConnectClient;
 use crate::config::Config;
 use crate::review::Review;
@@ -37,6 +38,7 @@ enum InputMode {
 
 pub struct ReviewUI {
     api_client: AppStoreConnectClient,
+    ai_generator: Option<AIResponseGenerator>,
     reviews: Vec<Review>,
     selected_review: Option<usize>,
     state: AppState,
@@ -50,8 +52,19 @@ pub struct ReviewUI {
 
 impl ReviewUI {
     pub async fn new(config: Config) -> Result<Self> {
-        let mut api_client = AppStoreConnectClient::new(config);
+        let mut api_client = AppStoreConnectClient::new(config.clone());
         let mut reviews = api_client.get_reviews().await?;
+        
+        // Initialize AI generator if OpenAI API key is available
+        let ai_generator = if let Some(api_key) = &config.openai_api_key {
+            let ai_config = AIConfig {
+                openai_api_key: api_key.clone(),
+                ..Default::default()
+            };
+            AIResponseGenerator::new(ai_config).ok()
+        } else {
+            None
+        };
 
         // Sort reviews by date (newest first)
         reviews.sort_by(|a, b| b.created_date.cmp(&a.created_date));
@@ -65,6 +78,7 @@ impl ReviewUI {
         
         Ok(Self {
             api_client,
+            ai_generator,
             reviews,
             selected_review,
             state: AppState::ViewingReviews,
@@ -288,24 +302,30 @@ impl ReviewUI {
     }
 
     async fn generate_ai_response(&self) -> Result<String> {
-        // Placeholder AI response generation
-        // In a real implementation, this would call OpenAI or another AI service
-        tokio::time::sleep(Duration::from_millis(1000)).await; // Simulate API call
-        
-        if let Some(review_idx) = self.selected_review {
-            let review = &self.reviews[review_idx];
-            let response = format!(
-                "Thank you for your {}-star review{}! We appreciate your feedback and are constantly working to improve our app.",
-                review.rating,
-                if let Some(title) = &review.title {
-                    format!(" about \"{}\"", title)
-                } else {
-                    String::new()
-                }
-            );
-            Ok(response)
+        if let Some(ai_generator) = &self.ai_generator {
+            if let Some(review_idx) = self.selected_review {
+                let review = &self.reviews[review_idx];
+                ai_generator.generate_response(review).await
+            } else {
+                Ok("Thank you for your feedback!".to_string())
+            }
         } else {
-            Ok("Thank you for your feedback!".to_string())
+            // Fallback to simple response if no AI available
+            if let Some(review_idx) = self.selected_review {
+                let review = &self.reviews[review_idx];
+                let response = format!(
+                    "Thank you for your {}-star review{}! We appreciate your feedback and are constantly working to improve our app.",
+                    review.rating,
+                    if let Some(title) = &review.title {
+                        format!(" about \"{}\"", title)
+                    } else {
+                        String::new()
+                    }
+                );
+                Ok(response)
+            } else {
+                Ok("Thank you for your feedback!".to_string())
+            }
         }
     }
 

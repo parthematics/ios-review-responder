@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Arg, Command};
 use dotenv::dotenv;
 
+mod ai;
 mod api;
 mod ui;
 mod config;
@@ -13,6 +14,36 @@ use ui::ReviewUI;
 async fn main() -> Result<()> {
     // Load .env file if it exists (ignore errors if file doesn't exist)
     dotenv().ok();
+    
+    // Test AI functionality with --test-ai flag
+    if std::env::args().any(|arg| arg == "--test-ai") {
+        use crate::ai::{AIConfig, AIResponseGenerator};
+        use crate::review::Review;
+        use chrono::Utc;
+        
+        let config = AIConfig::default();
+        let generator = AIResponseGenerator::new(config)?;
+        
+        let test_review = Review {
+            id: "test".to_string(),
+            rating: 5,
+            title: Some("Great app!".to_string()),
+            body: Some("I love this app, it works perfectly!".to_string()),
+            reviewer_nickname: "TestUser".to_string(),
+            created_date: Utc::now(),
+            territory: "US".to_string(),
+            version: Some("1.0".to_string()),
+            response: None,
+        };
+        
+        println!("Testing AI response generation...");
+        match generator.generate_response(&test_review).await {
+            Ok(response) => println!("AI Response: {}", response),
+            Err(e) => println!("AI Error: {}", e),
+        }
+        return Ok(());
+    }
+    
     let matches = Command::new("apple-review-responder")
         .version("0.1.0")
         .about("CLI tool for responding to Apple App Store reviews")

@@ -34,3 +34,5 @@ p256 = "0.11"
 pem = "3.0"
 # Environment variable loading
 dotenv = "0.15"
+# OpenAI API client
+async-openai = "0.24"

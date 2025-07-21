@@ -146,11 +146,51 @@ App Store Connect provides keys in PKCS#8 format by default.
 
 When you press 'a' to generate an AI response, the tool:
 1. Analyzes the review content and rating
-2. Generates a contextual response
-3. Allows you to edit the response before sending
-4. Requires your approval before submitting
+2. Generates a contextual response using OpenAI GPT-4.1-nano
+3. Incorporates custom keywords naturally when relevant
+4. Allows you to edit the response before sending
+5. Requires your approval before submitting
 
-**Note**: AI responses are currently a placeholder implementation. For production use, integrate with OpenAI or another AI service.
+### Customizing AI Responses
+
+The AI response generator can be customized by modifying `src/ai.rs`. You can configure:
+
+- **Keywords**: Domain-specific terms to include naturally in responses
+- **Support Email**: Your team's support contact for additional feedback
+- **Custom Prompt**: Additional instructions for the AI
+- **Supporting Info**: Context about your app
+
+#### Example Customization
+
+```rust
+impl Default for AIConfig {
+    fn default() -> Self {
+        Self {
+            openai_api_key: env::var("OPENAI_API_KEY").unwrap_or_default(),
+            model: "gpt-4.1-nano".to_string(),
+            keywords: vec![
+                "your_domain".to_string(), 
+                "feature".to_string(), 
+                "users".to_string()
+            ],
+            support_email: "support@yourapp.com".to_string(),
+            custom_prompt: Some("Always mention our latest update".to_string()),
+            supporting_info: Some("Our app helps users connect and build relationships".to_string()),
+        }
+    }
+}
+```
+
+#### Current Configuration
+
+The tool is currently configured for relationship/dating apps with keywords like:
+- relationships
+- couples  
+- love
+- partner
+- connection
+
+Support contact: candleappteam@gmail.com
 
 ## Error Handling
 
