@@ -13,6 +13,7 @@ a CLI tool built in Rust for managing and responding to Apple App Store reviews 
 ## Prerequisites
 
 1. **App Store Connect API Credentials**:
+
    - App Store Connect API Key ID
    - Issuer ID
    - Private Key file (.p8 format)
@@ -24,9 +25,10 @@ a CLI tool built in Rust for managing and responding to Apple App Store reviews 
 ## Installation
 
 1. Clone the repository:
+
    ```bash
    git clone <repository-url>
-   cd apple-review-responder
+   cd rustpond
    ```
 
 2. Build the application:
@@ -39,20 +41,22 @@ a CLI tool built in Rust for managing and responding to Apple App Store reviews 
 ### Using .env File (Recommended for Development)
 
 1. Copy the example environment file:
+
    ```bash
    cp .env.example .env
    ```
 
 2. Edit `.env` with your actual credentials:
+
    ```bash
    # Required: Your app's App Store ID
    APP_STORE_APP_ID=1234567890
-   
+
    # Required: App Store Connect API credentials
    APP_STORE_CONNECT_KEY_ID=ABCD123456
    APP_STORE_CONNECT_ISSUER_ID=12345678-1234-1234-1234-123456789012
    APP_STORE_CONNECT_PRIVATE_KEY_PATH=/path/to/your/AuthKey_ABCD123456.p8
-   
+
    # Optional: OpenAI API key for AI responses
    OPENAI_API_KEY=sk-your-openai-api-key-here
    ```
@@ -74,7 +78,7 @@ export OPENAI_API_KEY="your_openai_api_key"  # Optional, for AI responses
 Alternatively, you can pass credentials as command-line arguments:
 
 ```bash
-./target/release/apple-review-responder \
+./target/release/rustpond \
   --app-id "your_app_id" \
   --key-id "your_key_id" \
   --issuer-id "your_issuer_id" \
@@ -84,16 +88,28 @@ Alternatively, you can pass credentials as command-line arguments:
 ## Quick Start
 
 1. **Set up credentials**:
+
    ```bash
    cp .env.example .env
    # Edit .env with your App Store Connect credentials
    ```
 
 2. **Run the application**:
+
    ```bash
    cargo run
    # or if built
-   ./target/release/apple-review-responder
+   ./target/release/rustpond
+   ```
+
+3. **Create an alias for easier startup** (optional):
+
+   ```bash
+   # Add to your shell profile (~/.zshrc, ~/.bashrc, etc.)
+   alias rustpond='./target/release/rustpond'
+
+   # Then you can simply run:
+   rustpond
    ```
 
 ## Usage
@@ -101,6 +117,7 @@ Alternatively, you can pass credentials as command-line arguments:
 ### Controls
 
 **Review Navigation:**
+
 - `↑/↓` - Navigate between reviews
 - `Enter` - Write a manual response to the selected review
 - `a` - Generate an AI response for the selected review
@@ -108,17 +125,20 @@ Alternatively, you can pass credentials as command-line arguments:
 - `q` - Quit the application
 
 **Response Writing:**
+
 - Type your response in the text area
 - `Ctrl+Enter` - Submit response for approval
 - `Esc` - Cancel and return to review list
 
 **Response Approval:**
+
 - `y` - Approve and send the response
 - `n` or `Esc` - Go back to edit the response
 
 ## App Store Connect API Setup
 
 1. **Create API Key**:
+
    - Go to [App Store Connect](https://appstoreconnect.apple.com)
    - Navigate to Users and Access > Keys
    - Click the "+" button to create a new API key
@@ -126,6 +146,7 @@ Alternatively, you can pass credentials as command-line arguments:
    - Download the private key file (.p8)
 
 2. **Find Your App ID**:
+
    - Go to App Store Connect > My Apps
    - Select your app
    - The App ID is in the App Information section
@@ -137,6 +158,7 @@ Alternatively, you can pass credentials as command-line arguments:
 ## Private Key Format
 
 The tool supports both PKCS#1 and PKCS#8 format private keys:
+
 - PKCS#1: `-----BEGIN RSA PRIVATE KEY-----`
 - PKCS#8: `-----BEGIN PRIVATE KEY-----`
 
@@ -145,6 +167,7 @@ App Store Connect provides keys in PKCS#8 format by default.
 ## AI Response Generation
 
 When you press 'a' to generate an AI response, the tool:
+
 1. Analyzes the review content and rating
 2. Generates a contextual response using OpenAI GPT-4.1-nano
 3. Incorporates custom keywords naturally when relevant
@@ -169,8 +192,8 @@ impl Default for AIConfig {
             openai_api_key: env::var("OPENAI_API_KEY").unwrap_or_default(),
             model: "gpt-4.1-nano".to_string(),
             keywords: vec![
-                "your_domain".to_string(), 
-                "feature".to_string(), 
+                "your_domain".to_string(),
+                "feature".to_string(),
                 "users".to_string()
             ],
             support_email: "support@yourapp.com".to_string(),
@@ -184,8 +207,9 @@ impl Default for AIConfig {
 #### Current Configuration
 
 The tool is currently configured for relationship/dating apps with keywords like:
+
 - relationships
-- couples  
+- couples
 - love
 - partner
 - connection
@@ -195,6 +219,7 @@ Support contact: candleappteam@gmail.com
 ## Error Handling
 
 The tool provides error messages for common issues:
+
 - Invalid API credentials
 - Network connectivity problems
 - Missing private key files
@@ -247,6 +272,7 @@ This project is licensed under the MIT License.
 ## Support
 
 For issues and questions:
+
 - Check existing issues on GitHub
 - Review Apple's App Store Connect API documentation
 - Ensure your API credentials have the correct permissions

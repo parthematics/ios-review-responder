@@ -44,7 +44,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     
-    let matches = Command::new("apple-review-responder")
+    let matches = Command::new("rustpond")
         .version("0.1.0")
         .about("CLI tool for responding to Apple App Store reviews")
         .arg(

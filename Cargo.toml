@@ -1,38 +1,38 @@
 [package]
-name = "apple-review-responder"
+name = "rustpond"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# HTTP client for App Store Connect API
+# http client for app store connect api
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
-# JSON Web Token for App Store Connect authentication
+# json web token for app store connect authentication
 jsonwebtoken = "8.3"
-# Terminal UI framework
+# terminal ui framework
 crossterm = "0.28"
-# Async runtime
+# async runtime
 tokio = { version = "1.0", features = ["full"] }
-# JSON serialization
+# json serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-# Date/time handling
+# date/time handling
 chrono = { version = "0.4", features = ["serde"] }
-# Configuration
+# configuration
 clap = { version = "4.5", features = ["derive"] }
-# Terminal interface
+# terminal interface
 tui = "0.19"
-# Event handling for terminal
-# Error handling
+# event handling for terminal
+# error handling
 anyhow = "1.0"
-# UUID generation
+# uuid generation
 uuid = { version = "1.0", features = ["v4"] }
-# Base64 encoding for JWT
+# base64 encoding for jwt
 base64 = "0.21"
-# Elliptic Curve key handling for JWT (App Store Connect uses ES256)
+# elliptic curve key handling for jwt (app store connect uses es256)
 p256 = "0.11"
-# PEM parsing for private keys
+# pem parsing for private keys
 pem = "3.0"
-# Environment variable loading
+# environment variable loading
 dotenv = "0.15"
-# OpenAI API client
+# openai api client
 async-openai = "0.24"
