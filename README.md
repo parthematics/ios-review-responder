@@ -2,6 +2,8 @@
 
 a CLI tool built in Rust for managing and responding to Apple App Store reviews using the App Store Connect API. Support for Google Play store pending - contributions welcome!
 
+<img width="1089" height="359" alt="image" src="https://github.com/user-attachments/assets/a28579bb-3c7d-46c3-9446-89fce18279a7" />
+
 ## Features
 
 - **Review Navigation**: Browse reviews with arrow keys in a terminal UI
