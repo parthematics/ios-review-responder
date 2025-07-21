@@ -2,7 +2,10 @@
 
 a CLI tool built in Rust for managing and responding to Apple App Store reviews using the App Store Connect API. Support for Google Play store pending - contributions welcome!
 
-<img width="1089" height="359" alt="image" src="https://github.com/user-attachments/assets/a28579bb-3c7d-46c3-9446-89fce18279a7" />
+<figure style="text-align: center;">
+  <img width="1089" height="359" alt="image" src="https://github.com/user-attachments/assets/a28579bb-3c7d-46c3-9446-89fce18279a7" />
+  <figcaption><em>some recent reviews for the <a href="https://apps.apple.com/us/app/candle-couple-games-photos/id6743355635">candle</a> app, shown using rustpond</em></figcaption>
+</figure>
 
 ## Features
 
@@ -100,7 +103,7 @@ Alternatively, you can pass credentials as command-line arguments:
 
    ```bash
    cargo run
-   # or if built
+   # or if built already using `cargo build --release`
    ./target/release/rustpond
    ```
 
