@@ -1,6 +1,6 @@
-# Apple Review Responder
+# _rustpond_
 
-A command-line tool built in Rust for managing and responding to Apple App Store reviews using the App Store Connect API.
+a CLI tool built in Rust for managing and responding to Apple App Store reviews using the App Store Connect API. Support for Google Play store pending - contributions welcome!
 
 ## Features
 
