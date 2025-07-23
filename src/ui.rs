@@ -1,6 +1,8 @@
 use anyhow::Result;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -18,7 +20,7 @@ use tui::{
 };
 
 use crate::ai::{AIConfig, AIResponseGenerator};
-use crate::api::AppStoreConnectClient;
+use crate::api::ApiClient;
 use crate::config::Config;
 use crate::review::Review;
 
@@ -37,24 +39,82 @@ enum InputMode {
 }
 
 pub struct ReviewUI {
-    api_client: AppStoreConnectClient,
+    api_client: ApiClient,
     ai_generator: Option<AIResponseGenerator>,
     reviews: Vec<Review>,
     selected_review: Option<usize>,
     state: AppState,
     response_text: String,
+    cursor_position: usize,
     input_mode: InputMode,
     ai_generated_response: Option<String>,
     loading: bool,
     error_message: Option<String>,
     list_state: ListState,
+    config: Config,
 }
 
 impl ReviewUI {
-    pub async fn new(config: Config) -> Result<Self> {
-        let mut api_client = AppStoreConnectClient::new(config.clone());
-        let mut reviews = api_client.get_reviews().await?;
+    fn get_character_limit(&self) -> Option<usize> {
+        match self.config.platform {
+            crate::config::Platform::Android => Some(350),
+            crate::config::Platform::Ios => None, // No limit for iOS
+        }
+    }
+    
+    fn format_text_with_cursor(&self) -> String {
+        if self.cursor_position <= self.response_text.len() {
+            let mut display_text = self.response_text.clone();
+            // Always show static white square cursor
+            display_text.insert(self.cursor_position, '█'); // White square cursor
+            display_text
+        } else {
+            self.response_text.clone()
+        }
+    }
+
+    fn find_next_word_boundary(&self) -> usize {
+        let chars: Vec<char> = self.response_text.chars().collect();
+        let mut pos = self.cursor_position;
         
+        // Skip current word (non-whitespace)
+        while pos < chars.len() && !chars[pos].is_whitespace() {
+            pos += 1;
+        }
+        
+        // Skip whitespace to next word
+        while pos < chars.len() && chars[pos].is_whitespace() {
+            pos += 1;
+        }
+        
+        pos
+    }
+
+    fn find_prev_word_boundary(&self) -> usize {
+        let chars: Vec<char> = self.response_text.chars().collect();
+        if self.cursor_position == 0 {
+            return 0;
+        }
+        
+        let mut pos = self.cursor_position - 1;
+        
+        // Skip whitespace backwards
+        while pos > 0 && chars[pos].is_whitespace() {
+            pos -= 1;
+        }
+        
+        // Skip current word backwards
+        while pos > 0 && !chars[pos - 1].is_whitespace() {
+            pos -= 1;
+        }
+        
+        pos
+    }
+
+    pub async fn new(config: Config) -> Result<Self> {
+        let mut api_client = ApiClient::new(config.clone());
+        let mut reviews = api_client.get_reviews().await?;
+
         // Initialize AI generator if OpenAI API key is available
         let ai_generator = if let Some(api_key) = &config.openai_api_key {
             let ai_config = AIConfig {
@@ -75,7 +135,7 @@ impl ReviewUI {
         }
 
         let selected_review = if reviews.is_empty() { None } else { Some(0) };
-        
+
         Ok(Self {
             api_client,
             ai_generator,
@@ -83,11 +143,13 @@ impl ReviewUI {
             selected_review,
             state: AppState::ViewingReviews,
             response_text: String::new(),
+            cursor_position: 0,
             input_mode: InputMode::Manual,
             ai_generated_response: None,
             loading: false,
             error_message: None,
             list_state,
+            config,
         })
     }
 
@@ -129,25 +191,46 @@ impl ReviewUI {
                             UIAction::Quit => break,
                             UIAction::Refresh => {
                                 self.loading = true;
-                                match self.api_client.get_reviews().await {
+                                match self.api_client.refresh_all_reviews().await {
                                     Ok(mut reviews) => {
                                         // Sort reviews by date (newest first)
                                         reviews.sort_by(|a, b| b.created_date.cmp(&a.created_date));
-                                        
+
                                         self.reviews = reviews;
-                                        self.selected_review = if self.reviews.is_empty() { None } else { Some(0) };
+                                        self.selected_review = if self.reviews.is_empty() {
+                                            None
+                                        } else {
+                                            Some(0)
+                                        };
                                         if !self.reviews.is_empty() {
                                             self.list_state.select(Some(0));
                                         }
                                         self.error_message = None;
                                     }
                                     Err(e) => {
-                                        self.error_message = Some(format!("Failed to refresh reviews: {}", e));
+                                        self.error_message =
+                                            Some(format!("Failed to refresh reviews: {}", e));
                                     }
                                 }
                                 self.loading = false;
                             }
-                        }
+                            UIAction::LoadMore => {
+                                self.loading = true;
+                                match self.api_client.load_more_reviews().await {
+                                    Ok(mut new_reviews) => {
+                                        new_reviews
+                                            .sort_by(|a, b| b.created_date.cmp(&a.created_date));
+                                        self.reviews.extend(new_reviews);
+                                        self.error_message = None;
+                                    }
+                                    Err(e) => {
+                                        self.error_message =
+                                            Some(format!("Failed to load more reviews: {}", e));
+                                    }
+                                }
+                                self.loading = false;
+                            }
+                        },
                         None => {}
                     }
                 }
@@ -167,6 +250,11 @@ impl ReviewUI {
                 match key.code {
                     KeyCode::Char('q') => return Ok(Some(UIAction::Quit)),
                     KeyCode::Char('r') => return Ok(Some(UIAction::Refresh)),
+                    KeyCode::Char('l') => {
+                        if self.api_client.has_more_reviews() {
+                            return Ok(Some(UIAction::LoadMore));
+                        }
+                    }
                     KeyCode::Up => {
                         if let Some(selected) = self.selected_review {
                             if selected > 0 {
@@ -195,21 +283,35 @@ impl ReviewUI {
                                         .create(true)
                                         .append(true)
                                         .open("debug.log")
-                                        .unwrap_or_else(|_| std::fs::File::create("debug.log").unwrap());
-                                    writeln!(log_file, "DEBUG: UI received response: {:?}", response.is_some()).ok();
+                                        .unwrap_or_else(|_| {
+                                            std::fs::File::create("debug.log").unwrap()
+                                        });
+                                    writeln!(
+                                        log_file,
+                                        "DEBUG: UI received response: {:?}",
+                                        response.is_some()
+                                    )
+                                    .ok();
                                     if let Some(ref resp) = response {
-                                        writeln!(log_file, "DEBUG: Response body preview: {}", &resp.response_body[..resp.response_body.len().min(50)]).ok();
+                                        writeln!(
+                                            log_file,
+                                            "DEBUG: Response body preview: {}",
+                                            &resp.response_body[..resp.response_body.len().min(50)]
+                                        )
+                                        .ok();
                                     }
-                                    
+
                                     self.reviews[review_idx].response = response;
                                     self.state = AppState::WritingResponse;
                                     self.input_mode = InputMode::Manual;
                                     self.response_text.clear();
+                                    self.cursor_position = 0;
                                     self.ai_generated_response = None;
                                     self.error_message = None;
                                 }
                                 Err(e) => {
-                                    self.error_message = Some(format!("Failed to fetch response data: {}", e));
+                                    self.error_message =
+                                        Some(format!("Failed to fetch response data: {}", e));
                                 }
                             }
                             self.loading = false;
@@ -225,17 +327,19 @@ impl ReviewUI {
                                     self.reviews[review_idx].response = response;
                                     self.state = AppState::GeneratingAI;
                                     self.input_mode = InputMode::AI;
-                                    
+
                                     // Generate AI response (placeholder)
                                     let ai_response = self.generate_ai_response().await?;
                                     self.ai_generated_response = Some(ai_response.clone());
                                     self.response_text = ai_response;
+                                    self.cursor_position = self.response_text.len(); // Set cursor at end
                                     self.loading = false;
                                     self.state = AppState::WritingResponse;
                                     self.error_message = None;
                                 }
                                 Err(e) => {
-                                    self.error_message = Some(format!("Failed to fetch response data: {}", e));
+                                    self.error_message =
+                                        Some(format!("Failed to fetch response data: {}", e));
                                     self.loading = false;
                                 }
                             }
@@ -249,6 +353,7 @@ impl ReviewUI {
                     KeyCode::Esc => {
                         self.state = AppState::ViewingReviews;
                         self.response_text.clear();
+                        self.cursor_position = 0;
                         self.ai_generated_response = None;
                     }
                     KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -257,42 +362,158 @@ impl ReviewUI {
                         }
                     }
                     KeyCode::Enter => {
-                        // Regular Enter adds a new line
-                        self.response_text.push('\n');
+                        // Regular Enter adds a new line at cursor position
+                        if let Some(limit) = self.get_character_limit() {
+                            if self.response_text.len() < limit {
+                                self.response_text.insert(self.cursor_position, '\n');
+                                self.cursor_position += 1;
+                            }
+                        } else {
+                            self.response_text.insert(self.cursor_position, '\n');
+                            self.cursor_position += 1;
+                        }
                     }
                     KeyCode::Char(c) => {
-                        self.response_text.push(c);
-                    }
-                    KeyCode::Backspace => {
-                        self.response_text.pop();
-                    }
-                    _ => {}
-                }
-            }
-            AppState::ConfirmingResponse => {
-                match key.code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => {
-                        if let Some(review_idx) = self.selected_review {
-                            let review_id = &self.reviews[review_idx].id;
-                            match self.api_client.submit_response(review_id, &self.response_text).await {
-                                Ok(()) => {
-                                    self.error_message = Some("Response submitted successfully!".to_string());
+                        // Handle Option+Arrow key sequences that come as characters
+                        match c {
+                            'b' if key.modifiers.contains(KeyModifiers::ALT) => {
+                                // Option+Left (sometimes sent as Alt+b)
+                                self.cursor_position = self.find_prev_word_boundary();
+                            }
+                            'f' if key.modifiers.contains(KeyModifiers::ALT) => {
+                                // Option+Right (sometimes sent as Alt+f)
+                                self.cursor_position = self.find_next_word_boundary();
+                            }
+                            'w' if key.modifiers.contains(KeyModifiers::ALT) => {
+                                // Option+Backspace: Delete previous word (sometimes sent as Alt+w)
+                                let word_start = self.find_prev_word_boundary();
+                                if word_start < self.cursor_position {
+                                    self.response_text.drain(word_start..self.cursor_position);
+                                    self.cursor_position = word_start;
                                 }
-                                Err(e) => {
-                                    self.error_message = Some(format!("Failed to submit response: {}", e));
+                            }
+                            'w' if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                // Option+Backspace: Delete previous word (sent as Ctrl+w)
+                                let word_start = self.find_prev_word_boundary();
+                                if word_start < self.cursor_position {
+                                    self.response_text.drain(word_start..self.cursor_position);
+                                    self.cursor_position = word_start;
+                                }
+                            }
+                            'd' if key.modifiers.contains(KeyModifiers::ALT) => {
+                                // Option+d: Delete next word (Alt+d sequence)
+                                let word_end = self.find_next_word_boundary();
+                                if self.cursor_position < word_end {
+                                    self.response_text.drain(self.cursor_position..word_end);
+                                }
+                            }
+                            '\u{0017}' => {
+                                // Ctrl+W: Delete previous word (common terminal sequence for Option+Backspace)
+                                let word_start = self.find_prev_word_boundary();
+                                if word_start < self.cursor_position {
+                                    self.response_text.drain(word_start..self.cursor_position);
+                                    self.cursor_position = word_start;
+                                }
+                            }
+                            '\u{007f}' if key.modifiers.contains(KeyModifiers::ALT) => {
+                                // Option+Backspace: Delete previous word (Alt+DEL sequence)
+                                let word_start = self.find_prev_word_boundary();
+                                if word_start < self.cursor_position {
+                                    self.response_text.drain(word_start..self.cursor_position);
+                                    self.cursor_position = word_start;
+                                }
+                            }
+                            _ => {
+                                // Check character limit before inserting
+                                if let Some(limit) = self.get_character_limit() {
+                                    if self.response_text.len() < limit {
+                                        self.response_text.insert(self.cursor_position, c);
+                                        self.cursor_position += 1;
+                                    }
+                                } else {
+                                    self.response_text.insert(self.cursor_position, c);
+                                    self.cursor_position += 1;
                                 }
                             }
                         }
-                        self.state = AppState::ViewingReviews;
-                        self.response_text.clear();
-                        self.ai_generated_response = None;
                     }
-                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                        self.state = AppState::WritingResponse;
+                    KeyCode::Left => {
+                        if key.modifiers.contains(KeyModifiers::ALT) {
+                            // Option+Left: Jump to previous word
+                            self.cursor_position = self.find_prev_word_boundary();
+                        } else if key.modifiers.contains(KeyModifiers::CONTROL) {
+                            // Cmd+Left: Jump to beginning of line (treat as Home)
+                            self.cursor_position = 0;
+                        } else if self.cursor_position > 0 {
+                            self.cursor_position -= 1;
+                        }
+                    }
+                    KeyCode::Right => {
+                        if key.modifiers.contains(KeyModifiers::ALT) {
+                            // Option+Right: Jump to next word
+                            self.cursor_position = self.find_next_word_boundary();
+                        } else if key.modifiers.contains(KeyModifiers::CONTROL) {
+                            // Cmd+Right: Jump to end of line (treat as End)
+                            self.cursor_position = self.response_text.len();
+                        } else if self.cursor_position < self.response_text.len() {
+                            self.cursor_position += 1;
+                        }
+                    }
+                    KeyCode::Home => {
+                        self.cursor_position = 0;
+                    }
+                    KeyCode::End => {
+                        self.cursor_position = self.response_text.len();
+                    }
+                    KeyCode::Backspace => {
+                        if key.modifiers.contains(KeyModifiers::ALT) {
+                            // Option+Backspace: Delete previous word
+                            let word_start = self.find_prev_word_boundary();
+                            if word_start < self.cursor_position {
+                                self.response_text.drain(word_start..self.cursor_position);
+                                self.cursor_position = word_start;
+                            }
+                        } else if self.cursor_position > 0 {
+                            self.cursor_position -= 1;
+                            self.response_text.remove(self.cursor_position);
+                        }
+                    }
+                    KeyCode::Delete => {
+                        if self.cursor_position < self.response_text.len() {
+                            self.response_text.remove(self.cursor_position);
+                        }
                     }
                     _ => {}
                 }
             }
+            AppState::ConfirmingResponse => match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    if let Some(review_idx) = self.selected_review {
+                        let review_id = &self.reviews[review_idx].id;
+                        match self
+                            .api_client
+                            .submit_response(review_id, &self.response_text)
+                            .await
+                        {
+                            Ok(()) => {
+                                self.error_message =
+                                    Some("Response submitted successfully!".to_string());
+                            }
+                            Err(e) => {
+                                self.error_message =
+                                    Some(format!("Failed to submit response: {}", e));
+                            }
+                        }
+                    }
+                    self.state = AppState::ViewingReviews;
+                    self.response_text.clear();
+                    self.ai_generated_response = None;
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    self.state = AppState::WritingResponse;
+                }
+                _ => {}
+            },
             AppState::GeneratingAI => {
                 // Do nothing while generating
             }
@@ -347,7 +568,7 @@ impl ReviewUI {
                 .block(Block::default().borders(Borders::ALL).title("Message"))
                 .wrap(Wrap { trim: true });
             f.render_widget(error_paragraph, popup_area);
-            
+
             // Clear error after showing
             self.error_message = None;
         }
@@ -358,8 +579,8 @@ impl ReviewUI {
         let main_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(10),    // Main content area (reviews)
-                Constraint::Length(8),  // Help section (fixed height)
+                Constraint::Min(10),   // Main content area (reviews)
+                Constraint::Length(8), // Help section (fixed height)
             ])
             .split(area);
 
@@ -397,17 +618,32 @@ impl ReviewUI {
         if let Some(review_idx) = self.selected_review {
             let review = &self.reviews[review_idx];
             let rating_stars = "⭐".repeat(review.rating as usize);
-            
+
             let mut text = vec![
                 Spans::from(vec![Span::styled(
                     format!("Rating: {}", rating_stars),
                     Style::default().fg(Color::Yellow),
                 )]),
-                Spans::from(vec![Span::raw(format!("Reviewer: {}", review.reviewer_nickname))]),
-                Spans::from(vec![Span::raw(format!("Date: {}", review.created_date.format("%Y-%m-%d %H:%M")))]),
+                Spans::from(vec![Span::raw(format!(
+                    "Reviewer: {}",
+                    review.reviewer_nickname
+                ))]),
+                Spans::from(vec![Span::raw(format!(
+                    "Date: {}",
+                    review.created_date.format("%Y-%m-%d %H:%M")
+                ))]),
                 Spans::from(vec![Span::raw(format!("Territory: {}", review.territory))]),
-                Spans::from(vec![Span::raw("")]),
             ];
+
+            // Add version info if available
+            if let Some(version) = &review.version {
+                text.push(Spans::from(vec![Span::raw(format!(
+                    "Version: {}",
+                    version
+                ))]));
+            }
+
+            text.push(Spans::from(vec![Span::raw("")]));
 
             if let Some(title) = &review.title {
                 text.push(Spans::from(vec![Span::styled(
@@ -430,14 +666,19 @@ impl ReviewUI {
                 text.push(Spans::from(vec![Span::raw("")]));
                 text.push(Spans::from(vec![Span::styled(
                     "✅ Developer Response:",
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
                 )]));
                 text.push(Spans::from(vec![Span::styled(
                     &response.response_body,
                     Style::default().fg(Color::Green),
                 )]));
                 text.push(Spans::from(vec![Span::styled(
-                    format!("Responded: {}", response.last_modified_date.format("%Y-%m-%d %H:%M")),
+                    format!(
+                        "Responded: {}",
+                        response.last_modified_date.format("%Y-%m-%d %H:%M")
+                    ),
                     Style::default().fg(Color::Gray),
                 )]));
             } else {
@@ -449,7 +690,11 @@ impl ReviewUI {
             }
 
             let review_detail = Paragraph::new(text)
-                .block(Block::default().borders(Borders::ALL).title("Review Details"))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Review Details"),
+                )
                 .wrap(Wrap { trim: true });
 
             f.render_widget(review_detail, content_chunks[1]);
@@ -462,6 +707,7 @@ impl ReviewUI {
             Spans::from("Enter - Write manual response"),
             Spans::from("'a' - Generate AI response"),
             Spans::from("'r' - Refresh reviews"),
+            Spans::from("'l' - Load more reviews (Android)"),
             Spans::from("'q' - Quit"),
         ];
 
@@ -476,21 +722,27 @@ impl ReviewUI {
     fn draw_response_view<B: Backend>(&mut self, f: &mut Frame<B>, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(8),  // Original review
-                Constraint::Length(6),  // Existing response (if any)
-                Constraint::Min(8),     // Your response input
-            ].as_ref())
+            .constraints(
+                [
+                    Constraint::Length(8), // Original review
+                    Constraint::Length(6), // Existing response (if any)
+                    Constraint::Min(8),    // Your response input
+                ]
+                .as_ref(),
+            )
             .split(area);
 
         // Show current review at the top
         if let Some(review_idx) = self.selected_review {
             let review = &self.reviews[review_idx];
             let rating_stars = "⭐".repeat(review.rating as usize);
-            
+
             let review_text = vec![
                 Spans::from(vec![Span::styled(
-                    format!("Responding to: {} - {}", rating_stars, review.reviewer_nickname),
+                    format!(
+                        "Responding to: {} - {}",
+                        rating_stars, review.reviewer_nickname
+                    ),
                     Style::default().add_modifier(Modifier::BOLD),
                 )]),
                 Spans::from(vec![Span::raw("")]),
@@ -499,12 +751,16 @@ impl ReviewUI {
                     Style::default().add_modifier(Modifier::BOLD),
                 )]),
                 Spans::from(vec![Span::raw(
-                    review.body.as_deref().unwrap_or("(No review text)")
+                    review.body.as_deref().unwrap_or("(No review text)"),
                 )]),
             ];
 
             let review_paragraph = Paragraph::new(review_text)
-                .block(Block::default().borders(Borders::ALL).title("Original Review"))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Original Review"),
+                )
                 .wrap(Wrap { trim: true });
 
             f.render_widget(review_paragraph, chunks[0]);
@@ -521,45 +777,75 @@ impl ReviewUI {
                         Style::default().fg(Color::Yellow),
                     )]),
                     Spans::from(vec![Span::styled(
-                        format!("Sent: {}", response.last_modified_date.format("%Y-%m-%d %H:%M")),
+                        format!(
+                            "Sent: {}",
+                            response.last_modified_date.format("%Y-%m-%d %H:%M")
+                        ),
                         Style::default().fg(Color::Gray),
                     )]),
                 ];
 
                 let response_paragraph = Paragraph::new(response_text)
-                    .block(Block::default().borders(Borders::ALL).title("Existing Developer Response"))
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title("Existing Developer Response"),
+                    )
                     .wrap(Wrap { trim: true });
 
                 f.render_widget(response_paragraph, chunks[1]);
-                
+
                 // Response input (smaller since existing response is shown)
-                let input_title = "⚠️  Update/Replace Response (Ctrl+S to submit, Esc to cancel)";
-                let response_input = Paragraph::new(self.response_text.as_ref())
+                let input_title = if let Some(limit) = self.get_character_limit() {
+                    format!("⚠️  Update/Replace Response ({}/{} chars - Ctrl+S to submit, Esc to cancel)", 
+                           self.response_text.len(), limit)
+                } else {
+                    "⚠️  Update/Replace Response (Ctrl+S to submit, Esc to cancel)".to_string()
+                };
+                let display_text = self.format_text_with_cursor();
+                let response_input = Paragraph::new(display_text.as_ref())
                     .block(Block::default().borders(Borders::ALL).title(input_title))
                     .wrap(Wrap { trim: true });
 
                 f.render_widget(response_input, chunks[2]);
             } else {
                 // No existing response - show larger input area
-                let empty_text = vec![
-                    Spans::from(vec![Span::styled(
-                        "✅ No existing response - you can write a new one",
-                        Style::default().fg(Color::Green),
-                    )]),
-                ];
+                let empty_text = vec![Spans::from(vec![Span::styled(
+                    "✅ No existing response - you can write a new one",
+                    Style::default().fg(Color::Green),
+                )])];
 
                 let no_response_paragraph = Paragraph::new(empty_text)
-                    .block(Block::default().borders(Borders::ALL).title("Response Status"))
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title("Response Status"),
+                    )
                     .wrap(Wrap { trim: true });
 
                 f.render_widget(no_response_paragraph, chunks[1]);
 
                 let input_title = match self.input_mode {
-                    InputMode::Manual => "Write Response (Ctrl+S to submit, Esc to cancel)",
-                    InputMode::AI => "AI Generated Response (Edit if needed, Ctrl+S to submit, Esc to cancel)",
+                    InputMode::Manual => {
+                        if let Some(limit) = self.get_character_limit() {
+                            format!("Write Response ({}/{} chars - Ctrl+S to submit, Esc to cancel)", 
+                                   self.response_text.len(), limit)
+                        } else {
+                            "Write Response (Ctrl+S to submit, Esc to cancel)".to_string()
+                        }
+                    },
+                    InputMode::AI => {
+                        if let Some(limit) = self.get_character_limit() {
+                            format!("AI Generated Response ({}/{} chars - Edit if needed, Ctrl+S to submit, Esc to cancel)", 
+                                   self.response_text.len(), limit)
+                        } else {
+                            "AI Generated Response (Edit if needed, Ctrl+S to submit, Esc to cancel)".to_string()
+                        }
+                    }
                 };
 
-                let response_input = Paragraph::new(self.response_text.as_ref())
+                let display_text = self.format_text_with_cursor();
+                let response_input = Paragraph::new(display_text.as_ref())
                     .block(Block::default().borders(Borders::ALL).title(input_title))
                     .wrap(Wrap { trim: true });
 
@@ -574,19 +860,34 @@ impl ReviewUI {
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Min(5), Constraint::Length(3)].as_ref())
+            .constraints(
+                [
+                    Constraint::Length(3),
+                    Constraint::Min(5),
+                    Constraint::Length(3),
+                ]
+                .as_ref(),
+            )
             .split(popup_area);
 
         // Confirmation prompt
         let confirmation = Paragraph::new("Submit this response? (y/n)")
-            .block(Block::default().borders(Borders::ALL).title("Confirm Response"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Confirm Response"),
+            )
             .style(Style::default().add_modifier(Modifier::BOLD));
 
         f.render_widget(confirmation, chunks[0]);
 
         // Response preview
         let response_preview = Paragraph::new(self.response_text.as_ref())
-            .block(Block::default().borders(Borders::ALL).title("Response Preview"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Response Preview"),
+            )
             .wrap(Wrap { trim: true });
 
         f.render_widget(response_preview, chunks[1]);
@@ -614,6 +915,7 @@ impl ReviewUI {
 enum UIAction {
     Quit,
     Refresh,
+    LoadMore,
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {

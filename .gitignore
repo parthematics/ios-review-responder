@@ -8,6 +8,7 @@ Cargo.lock
 
 # Private keys
 *.p8
+google-services.json
 
 # IDE
 .vscode/
